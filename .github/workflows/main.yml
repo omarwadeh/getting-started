@@ -5,7 +5,6 @@ name: GettingStarted_Container_Workflow
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-
     env:
       RESOURCE_GROUP: ${{ secrets.RESOURCE_GROUP }}
       CONTAINER_NAME: ${{ secrets.CONTAINER_NAME }}
@@ -17,15 +16,15 @@ jobs:
       STORAGE_ACCOUNT_KEY: ${{ secrets.STORAGE_ACCOUNT_KEY }}
 
     steps:
-      - name: Checkout GitHub Action
+      - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Login via Azure CLI
+      - name: Azure CLI Login
         uses: azure/login@v1
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Docker login
+      - name: Docker Login
         uses: azure/docker-login@v1
         with:
           login-server: ${{ env.REGISTRY_SERVER }}
@@ -37,4 +36,26 @@ jobs:
           docker build . -t $REGISTRY_SERVER/$REPOSITORY_NAME:${{ github.run_number }}
           docker push $REGISTRY_SERVER/$REPOSITORY_NAME:${{ github.run_number }}
 
-      - name: Delete
+      - name: Delete existing container (if exists)
+        run: |
+          az container delete --resource-group $RESOURCE_GROUP --name $CONTAINER_NAME --yes || true
+
+      - name: Deploy to Azure Container Instances with persistent storage
+        run: |
+          az container create \
+            --resource-group $RESOURCE_GROUP \
+            --name $CONTAINER_NAME \
+            --image $REGISTRY_SERVER/$REPOSITORY_NAME:${{ github.run_number }} \
+            --registry-login-server $REGISTRY_SERVER \
+            --registry-username ${{ secrets.REGISTRY_USERNAME }} \
+            --registry-password ${{ secrets.REGISTRY_PASSWORD }} \
+            --dns-name-label $RESOURCE_GROUP \
+            --location $LOCATION \
+            --os-type Linux \
+            --ports 3000 \
+            --azure-file-volume-share-name $SHARE_NAME \
+            --azure-file-volume-account-name $STORAGE_ACCOUNT_NAME \
+            --azure-file-volume-account-key $STORAGE_ACCOUNT_KEY \
+            --azure-file-volume-mount-path /etc/todos \
+            --cpu 1 \
+            --memory 1.5
