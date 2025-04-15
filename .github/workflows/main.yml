@@ -1,12 +1,9 @@
 on: [push]
-
 name: GettingStarted_Container_Workflow
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-    
-    # Zet je environment-variabelen vanuit secrets.
     env:
       RESOURCE_GROUP: ${{ secrets.RESOURCE_GROUP }}
       CONTAINER_NAME: ${{ secrets.CONTAINER_NAME }}
@@ -45,18 +42,16 @@ jobs:
             --name "$CONTAINER_NAME" \
             --yes || true
 
-      # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-      # Extra stap om te checken of je STORAGE_ACCOUNT_KEY NIET leeg is.
-      # (optioneel, kun je weglaten als je zeker weet dat hij gevuld is)
-      - name: Debug Storage Key (optioneel)
+      # Debug-stap om je omgevingsvariabelen te zien (optioneel):
+      - name: Debug environment
         run: |
-          echo "DEBUG: Hier is de Storage Key lengte:"
-          echo "${#STORAGE_ACCOUNT_KEY}"
-          if [ -z "$STORAGE_ACCOUNT_KEY" ]; then
-            echo "ERROR: STORAGE_ACCOUNT_KEY is leeg of niet ingesteld!"
-            exit 1
-          fi
-      # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+          echo "RESOURCE_GROUP: $RESOURCE_GROUP"
+          echo "CONTAINER_NAME: $CONTAINER_NAME"
+          echo "REGISTRY_SERVER: $REGISTRY_SERVER"
+          echo "REPOSITORY_NAME: $REPOSITORY_NAME"
+          echo "STORAGE_ACCOUNT_NAME: $STORAGE_ACCOUNT_NAME"
+          echo "SHARE_NAME: $SHARE_NAME"
+          echo "LOCATION: $LOCATION"
 
       - name: Deploy to Azure Container Instances with persistent storage
         run: |
@@ -67,7 +62,7 @@ jobs:
             --registry-login-server "$REGISTRY_SERVER" \
             --registry-username "${{ secrets.REGISTRY_USERNAME }}" \
             --registry-password "${{ secrets.REGISTRY_PASSWORD }}" \
-            --dns-name-label "$RESOURCE_GROUP" \
+            --dns-name-label "$CONTAINER_NAME" \
             --location "$LOCATION" \
             --os-type Linux \
             --ports 3000 \
