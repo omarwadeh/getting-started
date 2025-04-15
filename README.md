@@ -18,3 +18,4 @@ Create a fileshare in your storage account
 Important!! The .yml file utilizes your resource group name for the DNS. This MUST be unique. Make sure the storage group name is unique, or change the value in the .yml file to correspond with a unique value. (at --dns-name-label)
 
 Use the tutorial in Canvas to obtain your azure credentials and make sure the AZURE_CREDENTIALS secret exists. Good luck!
+ss
