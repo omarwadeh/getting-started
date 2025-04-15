@@ -5,6 +5,7 @@ name: GettingStarted_Container_Workflow
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+
     env:
       RESOURCE_GROUP: ${{ secrets.RESOURCE_GROUP }}
       CONTAINER_NAME: ${{ secrets.CONTAINER_NAME }}
@@ -31,28 +32,9 @@ jobs:
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_PASSWORD }}
 
-      - name: Build and push image
+      - name: Build and push Docker image
         run: |
           docker build . -t $REGISTRY_SERVER/$REPOSITORY_NAME:${{ github.run_number }}
           docker push $REGISTRY_SERVER/$REPOSITORY_NAME:${{ github.run_number }}
 
-      - name: Delete existing container (if exists)
-        run: |
-          az container delete \
-            --resource-group $RESOURCE_GROUP \
-            --name $CONTAINER_NAME \
-            --yes || true
-
-      - name: Deploy to Azure Container Instances with persistent storage
-        run: |
-          az container create \
-            --resource-group $RESOURCE_GROUP \
-            --name $CONTAINER_NAME \
-            --image $REGISTRY_SERVER/$REPOSITORY_NAME:${{ github.run_number }} \
-            --registry-login-server $REGISTRY_SERVER \
-            --registry-username ${{ secrets.REGISTRY_USERNAME }} \
-            --registry-password ${{ secrets.REGISTRY_PASSWORD }} \
-            --dns-name-label $RESOURCE_GROUP \
-            --location $LOCATION \
-            --os
-
+      - name: Delete
