@@ -1,4 +1,3 @@
-# .github/workflows/deploy.yml
 on: [push]
 
 name: GettingStarted_Container_Workflow
@@ -8,22 +7,22 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      RG:              ${{ secrets.RESOURCE_GROUP }}
-      NAME:            ${{ secrets.CONTAINER_NAME }}
-      REGISTRY:        ${{ secrets.REGISTRY_LOGIN_SERVER }}
-      REPO:            ${{ secrets.REPOSITORY_NAME }}
-      USER:            ${{ secrets.REGISTRY_USERNAME }}
-      PASS:            ${{ secrets.REGISTRY_PASSWORD }}
-      SA_NAME:         ${{ secrets.STORAGE_ACCOUNT_NAME }}
-      SA_KEY:          ${{ secrets.STORAGE_ACCOUNT_KEY }}
-      SHARE:           ${{ secrets.SHARE_NAME }}
-      LOCATION:        ${{ secrets.LOCATION }}
+      RG:       ${{ secrets.RESOURCE_GROUP }}
+      NAME:     ${{ secrets.CONTAINER_NAME }}
+      REG:      ${{ secrets.REGISTRY_LOGIN_SERVER }}
+      REPO:     ${{ secrets.REPOSITORY_NAME }}
+      USER:     ${{ secrets.REGISTRY_USERNAME }}
+      PASS:     ${{ secrets.REGISTRY_PASSWORD }}
+      SA_NAME:  ${{ secrets.STORAGE_ACCOUNT_NAME }}
+      SA_KEY:   ${{ secrets.STORAGE_ACCOUNT_KEY }}
+      SHARE:    ${{ secrets.SHARE_NAME }}
+      LOC:      ${{ secrets.LOCATION }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Azure CLI Login
+      - name: Login to Azure
         uses: azure/login@v1
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
@@ -31,36 +30,21 @@ jobs:
       - name: Docker login
         uses: azure/docker-login@v1
         with:
-          login-server: ${{ env.REGISTRY }}
-          username:    ${{ env.USER }}
-          password:    ${{ env.PASS }}
+          login-server: ${{ env.REG }}
+          username:     ${{ env.USER }}
+          password:     ${{ env.PASS }}
 
-      - name: Build & push Docker image
+      - name: Build & push image
         run: |
-          docker build -t $REGISTRY/$REPO:${{ github.run_number }} .
-          docker push   $REGISTRY/$REPO:${{ github.run_number }}
+          docker build -t $REG/$REPO:${{ github.run_number }} .
+          docker push   $REG/$REPO:${{ github.run_number }}
 
-      - name: Delete old container if exists
+      - name: Delete old container (if exists)
         run: |
           az container delete \
             --resource-group $RG \
             --name          $NAME \
             --yes || true
-
-      - name: Minimal ACI deploy (zonder storage) — test
-        run: |
-          az container create \
-            --resource-group $RG \
-            --name            test-$NAME-${{ github.run_number }} \
-            --image           $REGISTRY/$REPO:${{ github.run_number }} \
-            --dns-name-label  test-$NAME-${{ github.run_number }} \
-            --location        $LOCATION \
-            --os-type         Linux \
-            --ports           3000 \
-            --cpu             1 \
-            --memory          1.5 \
-            --debug
-        continue-on-error: true
 
       - name: Ensure Azure File Share exists
         run: |
@@ -70,24 +54,40 @@ jobs:
             --account-key  $SA_KEY \
             --only-show-errors || true
 
-      - name: Full ACI deploy with persistent storage
+      - name: Deploy minimal ACI (zonder opslag) – test
         run: |
-          DNS_LABEL=$(echo $NAME | tr '[:upper:]' '[:lower:]')
           az container create \
-            --resource-group                  $RG \
-            --name                            $NAME \
-            --image                           $REGISTRY/$REPO:${{ github.run_number }} \
-            --registry-login-server           $REGISTRY \
-            --registry-username               $USER \
-            --registry-password               $PASS \
-            --dns-name-label                  $DNS_LABEL \
-            --location                        $LOCATION \
-            --os-type                         Linux \
-            --ports                           3000 \
-            --azure-file-volume-share-name    $SHARE \
-            --azure-file-volume-account-name  $SA_NAME \
-            --azure-file-volume-account-key   $SA_KEY \
-            --azure-file-volume-mount-path    /mnt/todos \
+            --resource-group $RG \
+            --name            minimal-${{ github.run_number }} \
+            --image           $REG/$REPO:${{ github.run_number }} \
+            --dns-name-label  minimaltest${{ github.run_number }} \
+            --location        $LOC \
+            --os-type         Linux \
+            --ports           3000 \
+            --cpu             1 \
+            --memory          1.5 \
+            --debug
+        continue-on-error: true
+
+      - name: Deploy ACI met persistent storage (exact)
+        run: |
+          # DNS-label = lowercase containernaam + run_number
+          DNS=$(echo $NAME-${{ github.run_number }} | tr '[:upper:]' '[:lower:]')
+          az container create \
+            --resource-group                 $RG \
+            --name                           $NAME \
+            --image                          $REG/$REPO:${{ github.run_number }} \
+            --registry-login-server          $REG \
+            --registry-username              $USER \
+            --registry-password              $PASS \
+            --dns-name-label                 $DNS \
+            --location                       $LOC \
+            --os-type                        Linux \
+            --ports                          3000 \
+            --azure-file-volume-share-name   $SHARE \
+            --azure-file-volume-account-name $SA_NAME \
+            --azure-file-volume-account-key  $SA_KEY \
+            --azure-file-volume-mount-path   /mnt/todos \
             --cpu                            1 \
             --memory                         1.5 \
             --debug
