@@ -25,19 +25,26 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Login to Azure (incl. subscription)
+      - name: Login to Azure & set subscription
         uses: azure/login@v1
         with:
           creds:          ${{ env.AZURE_CREDENTIALS }}
           subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Delete existing ACI container (if any)
+      - name: 🧹 Trim newline/carriage-returns from secrets
+        run: |
+          echo "RESOURCE_GROUP=$(echo \"$RESOURCE_GROUP\" | tr -d '\r\n')" >> $GITHUB_ENV
+          echo "LOCATION=$(echo \"$LOCATION\"       | tr -d '\r\n')" >> $GITHUB_ENV
+          echo "CONTAINER_NAME=$(echo \"$CONTAINER_NAME\" | tr -d '\r\n')" >> $GITHUB_ENV
+          echo "SHARE_NAME=$(echo \"$SHARE_NAME\"     | tr -d '\r\n')" >> $GITHUB_ENV
+
+      - name: Delete existing container (if exists)
         run: |
           az container delete \
             --resource-group "$RESOURCE_GROUP" \
             --name           "$CONTAINER_NAME" \
             --yes \
-          || echo "→ geen oude container om te verwijderen, ik ga door…"
+          || echo "Geen oude container om te verwijderen, ga door…"
 
       - name: Login to ACR
         uses: docker/login-action@v2
@@ -53,23 +60,8 @@ jobs:
           push: true
           tags: ${{ env.REGISTRY_LOGIN_SERVER }}/${{ env.REPOSITORY_NAME }}:${{ env.IMAGE_TAG }}
 
-      - name: Validate that Azure File Share exists
+      - name: Deploy to Azure Container Instance
         run: |
-          echo "→ Controleren of File Share '$SHARE_NAME' bestaat…"
-          EXISTS=$(az storage share exists \
-            --account-name "$STORAGE_ACCOUNT_NAME" \
-            --account-key  "$STORAGE_ACCOUNT_KEY" \
-            --name         "$SHARE_NAME" \
-            --query exists -o tsv)
-          if [ "$EXISTS" != "true" ]; then
-            echo "!! File Share '$SHARE_NAME' bestaat niet. Stoppen." >&2
-            exit 1
-          fi
-          echo "→ File Share bestaat, doorgaan."
-
-      - name: Deploy to Azure Container Instance (with debug)
-        run: |
-          set -x
           az container create \
             --resource-group                 "$RESOURCE_GROUP" \
             --location                       "$LOCATION" \
@@ -88,5 +80,4 @@ jobs:
             --azure-file-volume-account-key  "$STORAGE_ACCOUNT_KEY" \
             --azure-file-volume-mount-path   /mnt/azfile \
             --protocol                       TCP \
-            --restart-policy                 Always \
-            --debug
+            --restart-policy                 Always
