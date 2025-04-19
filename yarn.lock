@@ -5,12 +5,21 @@ name: GettingStarted_Container_Workflow
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+    env:
+      RG: ${{ secrets.RESOURCE_GROUP }}
+      NAME: ${{ secrets.CONTAINER_NAME }}
+      REGISTRY: ${{ secrets.REGISTRY_LOGIN_SERVER }}
+      REPO: ${{ secrets.REPOSITORY_NAME }}
+      SA_NAME: ${{ secrets.STORAGE_ACCOUNT_NAME }}
+      SA_KEY: ${{ secrets.STORAGE_ACCOUNT_KEY }}
+      SHARE: ${{ secrets.SHARE_NAME }}
+      LOCATION: ${{ secrets.LOCATION }}
 
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Azure CLI Login
+      - name: Login to Azure
         uses: azure/login@v1
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
@@ -18,43 +27,46 @@ jobs:
       - name: Docker login
         uses: azure/docker-login@v1
         with:
-          login-server: ${{ secrets.REGISTRY_LOGIN_SERVER }}
+          login-server: ${{ env.REGISTRY }}
           username:    ${{ secrets.REGISTRY_USERNAME }}
           password:    ${{ secrets.REGISTRY_PASSWORD }}
 
       - name: Build & push image
         run: |
-          docker build -t ${{ secrets.REGISTRY_LOGIN_SERVER }}/${{ secrets.REPOSITORY_NAME }}:${{ github.run_number }} .
-          docker push ${{ secrets.REGISTRY_LOGIN_SERVER }}/${{ secrets.REPOSITORY_NAME }}:${{ github.run_number }}
+          docker build -t $REGISTRY/$REPO:${{ github.run_number }} .
+          docker push $REGISTRY/$REPO:${{ github.run_number }}
 
-      - name: Delete existing container (if exists)
+      - name: Delete old container if exists
         run: |
           az container delete \
-            --resource-group ${{ secrets.RESOURCE_GROUP }} \
-            --name          ${{ secrets.CONTAINER_NAME }} \
+            --resource-group $RG \
+            --name $NAME \
             --yes || true
 
-      - name: Create Azure File Share (if missing)
+      - name: Ensure Azure File Share exists
         run: |
           az storage share create \
-            --account-name ${{ secrets.STORAGE_ACCOUNT_NAME }} \
-            --name         ${{ secrets.SHARE_NAME }} \
-            --account-key  ${{ secrets.STORAGE_ACCOUNT_KEY }} \
+            --account-name $SA_NAME \
+            --name         $SHARE \
+            --account-key  $SA_KEY \
             --only-show-errors || true
 
-      - name: Deploy to Azure Container Instances
+      - name: Deploy container with persistent storage
         run: |
+          # DNS label must be lowercase en mag geen underscores bevatten
+          DNS_LABEL=$(echo $NAME | tr '[:upper:]' '[:lower:]')
+          
           az container create \
-            --resource-group                  ${{ secrets.RESOURCE_GROUP }} \
-            --name                            ${{ secrets.CONTAINER_NAME }} \
-            --image                           ${{ secrets.REGISTRY_LOGIN_SERVER }}/${{ secrets.REPOSITORY_NAME }}:${{ github.run_number }} \
-            --dns-name-label                  ${{ secrets.CONTAINER_NAME }} \
-            --location                        ${{ secrets.LOCATION }} \
-            --os-type                         Linux \
-            --ports                           3000 \
-            --cpu                             1 \
-            --memory                          1.5 \
-            --azure-file-volume-share-name   ${{ secrets.SHARE_NAME }} \
-            --azure-file-volume-account-name ${{ secrets.STORAGE_ACCOUNT_NAME }} \
-            --azure-file-volume-account-key  ${{ secrets.STORAGE_ACCOUNT_KEY }} \
-            --azure-file-volume-mount-path   "/mnt/todos"
+            --resource-group $RG \
+            --name            $NAME \
+            --image           $REGISTRY/$REPO:${{ github.run_number }} \
+            --dns-name-label  $DNS_LABEL \
+            --location        $LOCATION \
+            --os-type         Linux \
+            --ports           3000 \
+            --azure-file-volume-share-name   $SHARE \
+            --azure-file-volume-account-name $SA_NAME \
+            --azure-file-volume-account-key  $SA_KEY \
+            --azure-file-volume-mount-path   "/mnt/todos" \
+            --cpu 1 \
+            --memory 1.5
