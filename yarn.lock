@@ -1,3 +1,4 @@
+# .github/workflows/deploy.yml
 on: [push]
 
 name: GettingStarted_Container_Workflow
@@ -7,16 +8,16 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      RG: ${{ secrets.RESOURCE_GROUP }}
-      NAME: ${{ secrets.CONTAINER_NAME }}
-      REGISTRY: ${{ secrets.REGISTRY_LOGIN_SERVER }}
-      REPO: ${{ secrets.REPOSITORY_NAME }}
-      USER: ${{ secrets.REGISTRY_USERNAME }}
-      PASS: ${{ secrets.REGISTRY_PASSWORD }}
-      SA_NAME: ${{ secrets.STORAGE_ACCOUNT_NAME }}
-      SA_KEY: ${{ secrets.STORAGE_ACCOUNT_KEY }}
-      SHARE: ${{ secrets.SHARE_NAME }}
-      LOCATION: ${{ secrets.LOCATION }}
+      RG:              ${{ secrets.RESOURCE_GROUP }}
+      NAME:            ${{ secrets.CONTAINER_NAME }}
+      REGISTRY:        ${{ secrets.REGISTRY_LOGIN_SERVER }}
+      REPO:            ${{ secrets.REPOSITORY_NAME }}
+      USER:            ${{ secrets.REGISTRY_USERNAME }}
+      PASS:            ${{ secrets.REGISTRY_PASSWORD }}
+      SA_NAME:         ${{ secrets.STORAGE_ACCOUNT_NAME }}
+      SA_KEY:          ${{ secrets.STORAGE_ACCOUNT_KEY }}
+      SHARE:           ${{ secrets.SHARE_NAME }}
+      LOCATION:        ${{ secrets.LOCATION }}
 
     steps:
       - name: Checkout code
@@ -37,7 +38,7 @@ jobs:
       - name: Build & push Docker image
         run: |
           docker build -t $REGISTRY/$REPO:${{ github.run_number }} .
-          docker push    $REGISTRY/$REPO:${{ github.run_number }}
+          docker push   $REGISTRY/$REPO:${{ github.run_number }}
 
       - name: Delete old container if exists
         run: |
@@ -45,6 +46,21 @@ jobs:
             --resource-group $RG \
             --name          $NAME \
             --yes || true
+
+      - name: Minimal ACI deploy (zonder storage) — test
+        run: |
+          az container create \
+            --resource-group $RG \
+            --name            test-$NAME-${{ github.run_number }} \
+            --image           $REGISTRY/$REPO:${{ github.run_number }} \
+            --dns-name-label  test-$NAME-${{ github.run_number }} \
+            --location        $LOCATION \
+            --os-type         Linux \
+            --ports           3000 \
+            --cpu             1 \
+            --memory          1.5 \
+            --debug
+        continue-on-error: true
 
       - name: Ensure Azure File Share exists
         run: |
@@ -54,24 +70,24 @@ jobs:
             --account-key  $SA_KEY \
             --only-show-errors || true
 
-      - name: Deploy container to ACI with storage
+      - name: Full ACI deploy with persistent storage
         run: |
-          DNS=$(echo $NAME | tr '[:upper:]' '[:lower:]')   # lowercase dns-label
+          DNS_LABEL=$(echo $NAME | tr '[:upper:]' '[:lower:]')
           az container create \
-            --resource-group               $RG \
-            --name                         $NAME \
-            --image                        $REGISTRY/$REPO:${{ github.run_number }} \
-            --registry-login-server        $REGISTRY \
-            --registry-username            $USER \
-            --registry-password            $PASS \
-            --dns-name-label               $DNS \
-            --location                     $LOCATION \
-            --os-type                      Linux \
-            --ports                        3000 \
-            --azure-file-volume-share-name   $SHARE \
-            --azure-file-volume-account-name $SA_NAME \
-            --azure-file-volume-account-key  $SA_KEY \
-            --azure-file-volume-mount-path   /mnt/todos \
-            --cpu 1 \
-            --memory 1.5 \
+            --resource-group                  $RG \
+            --name                            $NAME \
+            --image                           $REGISTRY/$REPO:${{ github.run_number }} \
+            --registry-login-server           $REGISTRY \
+            --registry-username               $USER \
+            --registry-password               $PASS \
+            --dns-name-label                  $DNS_LABEL \
+            --location                        $LOCATION \
+            --os-type                         Linux \
+            --ports                           3000 \
+            --azure-file-volume-share-name    $SHARE \
+            --azure-file-volume-account-name  $SA_NAME \
+            --azure-file-volume-account-key   $SA_KEY \
+            --azure-file-volume-mount-path    /mnt/todos \
+            --cpu                            1 \
+            --memory                         1.5 \
             --debug
