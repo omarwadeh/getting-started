@@ -1,6 +1,4 @@
-# .github/workflows/build-and-deploy.yml
 name: Build & Deploy to ACI
-
 on:
   push:
     branches:
@@ -10,9 +8,11 @@ jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
     env:
+      # Zorg dat je deze secrets toevoegt in GitHub repo > Settings > Secrets
       AZURE_CREDENTIALS:       ${{ secrets.AZURE_CREDENTIALS }}
       AZURE_SUBSCRIPTION_ID:   ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       RESOURCE_GROUP:          ${{ secrets.RESOURCE_GROUP }}
+      LOCATION:                ${{ secrets.LOCATION }}
       CONTAINER_NAME:          ${{ secrets.CONTAINER_NAME }}
       REGISTRY_LOGIN_SERVER:   ${{ secrets.REGISTRY_LOGIN_SERVER }}
       REGISTRY_USERNAME:       ${{ secrets.REGISTRY_USERNAME }}
@@ -27,19 +27,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Login to Azure (incl. subscription)
+      - name: Login to Azure & select subscription
         uses: azure/login@v1
         with:
-          creds: ${{ env.AZURE_CREDENTIALS }}
+          creds:          ${{ env.AZURE_CREDENTIALS }}
           subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Determine Resource Group location
-        id: set-location
-        run: |
-          LOC=$(az group show \
-            --name "${RESOURCE_GROUP}" \
-            --query location -o tsv)
-          echo "LOCATION=${LOC}" >> $GITHUB_ENV
 
       - name: Login to ACR
         uses: docker/login-action@v2
@@ -58,22 +50,19 @@ jobs:
       - name: Deploy to Azure Container Instance
         run: |
           az container create \
-            --resource-group                 "${RESOURCE_GROUP}" \
-            --location                       "${LOCATION}" \
-            --name                           "${CONTAINER_NAME}" \
-            --image                          "${REGISTRY_LOGIN_SERVER}/${REPOSITORY_NAME}:${IMAGE_TAG}" \
-            --registry-login-server          "${REGISTRY_LOGIN_SERVER}" \
-            --registry-username              "${REGISTRY_USERNAME}" \
-            --registry-password              "${REGISTRY_PASSWORD}" \
-            --dns-name-label                 "${CONTAINER_NAME}" \
+            --resource-group                 "$RESOURCE_GROUP" \
+            --location                       "$LOCATION" \
+            --name                           "$CONTAINER_NAME" \
+            --image                          "$REGISTRY_LOGIN_SERVER/$REPOSITORY_NAME:$IMAGE_TAG" \
+            --registry-login-server          "$REGISTRY_LOGIN_SERVER" \
+            --registry-username              "$REGISTRY_USERNAME" \
+            --registry-password              "$REGISTRY_PASSWORD" \
+            --dns-name-label                 "$CONTAINER_NAME" \
             --os-type                        Linux \
             --ports                          3000 \
             --cpu                            1 \
             --memory                         1.5 \
-            --azure-file-volume-share-name   "${SHARE_NAME}" \
-            --azure-file-volume-account-name "${STORAGE_ACCOUNT_NAME}" \
-            --azure-file-volume-account-key  "${STORAGE_ACCOUNT_KEY}" \
-            --azure-file-volume-mount-path   /mnt/azfile \
-            --restart-policy                 Always \
-            --protocol                       TCP \
-            --debug
+            --azure-file-volume-share-name   "$SHARE_NAME" \
+            --azure-file-volume-account-name "$STORAGE_ACCOUNT_NAME" \
+            --azure-file-volume-account-key  "$STORAGE_ACCOUNT_KEY" \
+            --azure-file-volume-mount-path   /mnt/azfile
