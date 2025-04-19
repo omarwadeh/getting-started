@@ -6,17 +6,6 @@ jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
 
-    # Lees al je secrets in als env vars
-    env:
-      RESOURCE_GROUP: ${{ secrets.RESOURCE_GROUP }}
-      CONTAINER_NAME: ${{ secrets.CONTAINER_NAME }}
-      REGISTRY_SERVER: ${{ secrets.REGISTRY_LOGIN_SERVER }}
-      REPOSITORY_NAME: ${{ secrets.REPOSITORY_NAME }}
-      STORAGE_ACCOUNT_NAME: ${{ secrets.STORAGE_ACCOUNT_NAME }}
-      SHARE_NAME: ${{ secrets.SHARE_NAME }}
-      LOCATION: ${{ secrets.LOCATION }}
-      STORAGE_ACCOUNT_KEY: ${{ secrets.STORAGE_ACCOUNT_KEY }}
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -26,61 +15,46 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Docker Login
+      - name: Docker login
         uses: azure/docker-login@v1
         with:
-          login-server: ${{ env.REGISTRY_SERVER }}
-          username: ${{ secrets.REGISTRY_USERNAME }}
-          password: ${{ secrets.REGISTRY_PASSWORD }}
+          login-server: ${{ secrets.REGISTRY_LOGIN_SERVER }}
+          username:    ${{ secrets.REGISTRY_USERNAME }}
+          password:    ${{ secrets.REGISTRY_PASSWORD }}
 
       - name: Build & push image
         run: |
-          docker build . -t $REGISTRY_SERVER/$REPOSITORY_NAME:${{ github.run_number }}
-          docker push $REGISTRY_SERVER/$REPOSITORY_NAME:${{ github.run_number }}
+          docker build -t ${{ secrets.REGISTRY_LOGIN_SERVER }}/${{ secrets.REPOSITORY_NAME }}:${{ github.run_number }} .
+          docker push ${{ secrets.REGISTRY_LOGIN_SERVER }}/${{ secrets.REPOSITORY_NAME }}:${{ github.run_number }}
 
       - name: Delete existing container (if exists)
         run: |
           az container delete \
-            --resource-group "$RESOURCE_GROUP" \
-            --name "$CONTAINER_NAME" \
+            --resource-group ${{ secrets.RESOURCE_GROUP }} \
+            --name          ${{ secrets.CONTAINER_NAME }} \
             --yes || true
 
-      - name: Debug environment (values masked but show structure)
-        run: |
-          echo "RESOURCE_GROUP: $RESOURCE_GROUP"
-          echo "CONTAINER_NAME: $CONTAINER_NAME"
-          echo "REGISTRY_SERVER: $REGISTRY_SERVER"
-          echo "REPOSITORY_NAME: $REPOSITORY_NAME"
-          echo "STORAGE_ACCOUNT_NAME: $STORAGE_ACCOUNT_NAME"
-          echo "SHARE_NAME: $SHARE_NAME"
-          echo "LOCATION: $LOCATION"
-          echo "STORAGE_ACCOUNT_KEY length: ${#STORAGE_ACCOUNT_KEY}"
-
-      - name: Ensure Azure File Share exists
+      - name: Create Azure File Share (if missing)
         run: |
           az storage share create \
-            --account-name "$STORAGE_ACCOUNT_NAME" \
-            --name "$SHARE_NAME" \
-            --account-key "$STORAGE_ACCOUNT_KEY" \
-            --only-show-errors || echo "Share already exists"
+            --account-name ${{ secrets.STORAGE_ACCOUNT_NAME }} \
+            --name         ${{ secrets.SHARE_NAME }} \
+            --account-key  ${{ secrets.STORAGE_ACCOUNT_KEY }} \
+            --only-show-errors || true
 
-      - name: Deploy to ACI with persistent storage (with debug)
+      - name: Deploy to Azure Container Instances
         run: |
           az container create \
-            --resource-group "$RESOURCE_GROUP" \
-            --name "$CONTAINER_NAME" \
-            --image "$REGISTRY_SERVER/$REPOSITORY_NAME:${{ github.run_number }}" \
-            --registry-login-server "$REGISTRY_SERVER" \
-            --registry-username "${{ secrets.REGISTRY_USERNAME }}" \
-            --registry-password "${{ secrets.REGISTRY_PASSWORD }}" \
-            --dns-name-label "$CONTAINER_NAME" \
-            --location "$LOCATION" \
-            --os-type Linux \
-            --ports 3000 \
-            --azure-file-volume-share-name "$SHARE_NAME" \
-            --azure-file-volume-account-name "$STORAGE_ACCOUNT_NAME" \
-            --azure-file-volume-account-key "$STORAGE_ACCOUNT_KEY" \
-            --azure-file-volume-mount-path "/etc/todos" \
-            --cpu 1 \
-            --memory 1.5 \
-            --debug
+            --resource-group                  ${{ secrets.RESOURCE_GROUP }} \
+            --name                            ${{ secrets.CONTAINER_NAME }} \
+            --image                           ${{ secrets.REGISTRY_LOGIN_SERVER }}/${{ secrets.REPOSITORY_NAME }}:${{ github.run_number }} \
+            --dns-name-label                  ${{ secrets.CONTAINER_NAME }} \
+            --location                        ${{ secrets.LOCATION }} \
+            --os-type                         Linux \
+            --ports                           3000 \
+            --cpu                             1 \
+            --memory                          1.5 \
+            --azure-file-volume-share-name   ${{ secrets.SHARE_NAME }} \
+            --azure-file-volume-account-name ${{ secrets.STORAGE_ACCOUNT_NAME }} \
+            --azure-file-volume-account-key  ${{ secrets.STORAGE_ACCOUNT_KEY }} \
+            --azure-file-volume-mount-path   "/mnt/todos"
