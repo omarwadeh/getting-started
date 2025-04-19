@@ -5,11 +5,14 @@ name: GettingStarted_Container_Workflow
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+
     env:
       RG: ${{ secrets.RESOURCE_GROUP }}
       NAME: ${{ secrets.CONTAINER_NAME }}
       REGISTRY: ${{ secrets.REGISTRY_LOGIN_SERVER }}
       REPO: ${{ secrets.REPOSITORY_NAME }}
+      USER: ${{ secrets.REGISTRY_USERNAME }}
+      PASS: ${{ secrets.REGISTRY_PASSWORD }}
       SA_NAME: ${{ secrets.STORAGE_ACCOUNT_NAME }}
       SA_KEY: ${{ secrets.STORAGE_ACCOUNT_KEY }}
       SHARE: ${{ secrets.SHARE_NAME }}
@@ -19,7 +22,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Login to Azure
+      - name: Azure CLI Login
         uses: azure/login@v1
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
@@ -28,19 +31,19 @@ jobs:
         uses: azure/docker-login@v1
         with:
           login-server: ${{ env.REGISTRY }}
-          username:    ${{ secrets.REGISTRY_USERNAME }}
-          password:    ${{ secrets.REGISTRY_PASSWORD }}
+          username:    ${{ env.USER }}
+          password:    ${{ env.PASS }}
 
-      - name: Build & push image
+      - name: Build & push Docker image
         run: |
           docker build -t $REGISTRY/$REPO:${{ github.run_number }} .
-          docker push $REGISTRY/$REPO:${{ github.run_number }}
+          docker push    $REGISTRY/$REPO:${{ github.run_number }}
 
       - name: Delete old container if exists
         run: |
           az container delete \
             --resource-group $RG \
-            --name $NAME \
+            --name          $NAME \
             --yes || true
 
       - name: Ensure Azure File Share exists
@@ -51,22 +54,24 @@ jobs:
             --account-key  $SA_KEY \
             --only-show-errors || true
 
-      - name: Deploy container with persistent storage
+      - name: Deploy container to ACI with storage
         run: |
-          # DNS label must be lowercase en mag geen underscores bevatten
-          DNS_LABEL=$(echo $NAME | tr '[:upper:]' '[:lower:]')
-          
+          DNS=$(echo $NAME | tr '[:upper:]' '[:lower:]')   # lowercase dns-label
           az container create \
-            --resource-group $RG \
-            --name            $NAME \
-            --image           $REGISTRY/$REPO:${{ github.run_number }} \
-            --dns-name-label  $DNS_LABEL \
-            --location        $LOCATION \
-            --os-type         Linux \
-            --ports           3000 \
+            --resource-group               $RG \
+            --name                         $NAME \
+            --image                        $REGISTRY/$REPO:${{ github.run_number }} \
+            --registry-login-server        $REGISTRY \
+            --registry-username            $USER \
+            --registry-password            $PASS \
+            --dns-name-label               $DNS \
+            --location                     $LOCATION \
+            --os-type                      Linux \
+            --ports                        3000 \
             --azure-file-volume-share-name   $SHARE \
             --azure-file-volume-account-name $SA_NAME \
             --azure-file-volume-account-key  $SA_KEY \
-            --azure-file-volume-mount-path   "/mnt/todos" \
+            --azure-file-volume-mount-path   /mnt/todos \
             --cpu 1 \
-            --memory 1.5
+            --memory 1.5 \
+            --debug
