@@ -1,48 +1,72 @@
-on: [push]
+name: Build & Deploy to ACI
+on: [ push ]
 
-name: GettingStarted_Container_Workflow
 jobs:
- build-and-deploy:
-   runs-on: ubuntu-latest
-   steps:
-   # checkout the repo
-   - name: 'Checkout GitHub Action'
-     uses: actions/checkout@main
-  
-   - name: 'Login via Azure CLI'
-     uses: azure/login@v1
-     with:
-       creds: ${{ secrets.AZURE_CREDENTIALS }}
-  
-   - name: 'Build and push image'
-     uses: azure/docker-login@v1
-     with:
-       login-server: ${{ secrets.REGISTRY_LOGIN_SERVER }}
-       username: ${{ secrets.REGISTRY_USERNAME }}
-       password: ${{ secrets.REGISTRY_PASSWORD }}
-   - run: docker build . -t ${{ secrets.REGISTRY_LOGIN_SERVER }}/${{ secrets.REPOSITORY_NAME }}:${{ github.run_number }} && docker push ${{ secrets.REGISTRY_LOGIN_SERVER }}/${{ secrets.REPOSITORY_NAME }}:${{ github.run_number }}
-   - name: 'Delete existing container (if exists)'
-     run: |
-      az container delete \
-      --resource-group ${{ secrets.RESOURCE_GROUP }} \
-      --name getting-started-github \
-      --yes || true
-   - name: 'Deploy to Azure Container Instances with persistent storage'
-     run: |
-      az container create \
-      --resource-group ${{ secrets.RESOURCE_GROUP }} \
-      --name getting-started-github \
-      --image ${{ secrets.REGISTRY_LOGIN_SERVER }}/${{ secrets.REPOSITORY_NAME }}:${{ github.run_number }} \
-      --registry-login-server ${{ secrets.REGISTRY_LOGIN_SERVER }} \
-      --registry-username ${{ secrets.REGISTRY_USERNAME }} \
-      --registry-password ${{ secrets.REGISTRY_PASSWORD }} \
-      --dns-name-label ${{ secrets.RESOURCE_GROUP }} \
-      --location ${{ secrets.LOCATION }} \
-      --os-type Linux \
-      --ports 3000 \
-      --azure-file-volume-share-name ${{ secrets.SHARE_NAME }} \
-      --azure-file-volume-account-name ${{ secrets.STORAGE_ACCOUNT_NAME }} \
-      --azure-file-volume-account-key ${{ secrets.STORAGE_ACCOUNT_KEY }} \
-      --azure-file-volume-mount-path /etc/todos \
-      --cpu 1 \
-      --memory 1.5
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    env:
+      AZURE_CREDENTIALS:       ${{ secrets.AZURE_CREDENTIALS }}
+      AZURE_SUBSCRIPTION_ID:   ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      RESOURCE_GROUP:          ${{ secrets.RESOURCE_GROUP }}
+      LOCATION:                ${{ secrets.LOCATION }}
+      CONTAINER_NAME:          ${{ secrets.CONTAINER_NAME }}
+      REGISTRY_LOGIN_SERVER:   ${{ secrets.REGISTRY_LOGIN_SERVER }}
+      REGISTRY_USERNAME:       ${{ secrets.REGISTRY_USERNAME }}
+      REGISTRY_PASSWORD:       ${{ secrets.REGISTRY_PASSWORD }}
+      REPOSITORY_NAME:         ${{ secrets.REPOSITORY_NAME }}
+      IMAGE_TAG:               "23"
+      SHARE_NAME:              ${{ secrets.SHARE_NAME }}
+      STORAGE_ACCOUNT_NAME:    ${{ secrets.STORAGE_ACCOUNT_NAME }}
+      STORAGE_ACCOUNT_KEY:     ${{ secrets.STORAGE_ACCOUNT_KEY }}
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Login to Azure & set subscription
+        uses: azure/login@v1
+        with:
+          creds:          ${{ env.AZURE_CREDENTIALS }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Delete existing container (if exists)
+        run: |
+          echo "→ Removing old ACI container '${CONTAINER_NAME}' (if it exists)…"
+          az container delete \
+            --resource-group "$RESOURCE_GROUP" \
+            --name           "$CONTAINER_NAME" \
+            --yes \
+          || echo "No container named '${CONTAINER_NAME}' to delete, moving on."
+
+      - name: Login to ACR
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ env.REGISTRY_LOGIN_SERVER }}
+          username: ${{ env.REGISTRY_USERNAME }}
+          password: ${{ env.REGISTRY_PASSWORD }}
+
+      - name: Build & Push Docker image
+        uses: docker/build-push-action@v3
+        with:
+          context: .
+          push: true
+          tags: ${{ env.REGISTRY_LOGIN_SERVER }}/${{ env.REPOSITORY_NAME }}:${{ env.IMAGE_TAG }}
+
+      - name: Deploy to Azure Container Instance
+        run: |
+          az container create \
+            --resource-group                 "$RESOURCE_GROUP" \
+            --location                       "$LOCATION" \
+            --name                           "$CONTAINER_NAME" \
+            --image                          "$REGISTRY_LOGIN_SERVER/$REPOSITORY_NAME:$IMAGE_TAG" \
+            --registry-login-server          "$REGISTRY_LOGIN_SERVER" \
+            --registry-username              "$REGISTRY_USERNAME" \
+            --registry-password              "$REGISTRY_PASSWORD" \
+            --dns-name-label                 "$CONTAINER_NAME" \
+            --os-type                        Linux \
+            --ports                          3000 \
+            --cpu                            1 \
+            --memory                         1.5 \
+            --azure-file-volume-share-name   "$SHARE_NAME" \
+            --azure-file-volume-account-name "$STORAGE_ACCOUNT_NAME" \
+            --azure-file-volume-account-key  "$STORAGE_ACCOUNT_KEY" \
+            --azure-file-volume-mount-path   /mnt/azfile
