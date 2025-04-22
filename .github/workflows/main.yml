@@ -1,125 +1,90 @@
-name: ACI Deployment Debug
+name: Build & Deploy to Azure Container Instance
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
+
+env:
+  # Gebruik hier alleen secrets, geen regels of lege regels
+  RESOURCE_GROUP:        ${{ secrets.RESOURCE_GROUP }}
+  LOCATION:              ${{ secrets.LOCATION }}
+  CONTAINER_NAME:        ${{ secrets.CONTAINER_NAME }}
+  SHARE_NAME:            ${{ secrets.SHARE_NAME }}
+  STORAGE_ACCOUNT_NAME:  ${{ secrets.STORAGE_ACCOUNT_NAME }}
+  REGISTRY_LOGIN_SERVER: ${{ secrets.REGISTRY_LOGIN_SERVER }}
+  REPOSITORY_NAME:       ${{ secrets.REPOSITORY_NAME }}
+  IMAGE_TAG:             ${{ github.sha }}
 
 jobs:
-  debug-aci:
+  build-and-deploy:
     runs-on: ubuntu-latest
-
-    env:
-      AZURE_CREDENTIALS:     ${{ secrets.AZURE_CREDENTIALS }}
-      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      RESOURCE_GROUP:        ${{ secrets.RESOURCE_GROUP }}
-      LOCATION:              ${{ secrets.LOCATION }}
-      CONTAINER_NAME:        ${{ secrets.CONTAINER_NAME }}
-      REGISTRY_LOGIN_SERVER: ${{ secrets.REGISTRY_LOGIN_SERVER }}
-      REGISTRY_USERNAME:     ${{ secrets.REGISTRY_USERNAME }}
-      REGISTRY_PASSWORD:     ${{ secrets.REGISTRY_PASSWORD }}
-      REPOSITORY_NAME:       ${{ secrets.REPOSITORY_NAME }}
-      IMAGE_TAG:             ${{ env.IMAGE_TAG || '23' }}
-      SHARE_NAME:            ${{ secrets.SHARE_NAME }}
-      STORAGE_ACCOUNT_NAME:  ${{ secrets.STORAGE_ACCOUNT_NAME }}
-      STORAGE_ACCOUNT_KEY:   ${{ secrets.STORAGE_ACCOUNT_KEY }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Trim possible newlines uit secrets
+      - name: Trim newlines uit secrets
         run: |
-          for v in AZURE_SUBSCRIPTION_ID RESOURCE_GROUP LOCATION \
-                   CONTAINER_NAME SHARE_NAME STORAGE_ACCOUNT_NAME STORAGE_ACCOUNT_KEY; do
-            echo "$v=$(echo "${!v}" | tr -d '\r\n')" >> $GITHUB_ENV
+          for var in RESOURCE_GROUP LOCATION CONTAINER_NAME SHARE_NAME STORAGE_ACCOUNT_NAME; do
+            echo "$var=$(echo "${!var}" | tr -d '\r\n')" >> $GITHUB_ENV
           done
 
       - name: Login to Azure
         uses: azure/login@v1
         with:
-          creds: ${{ env.AZURE_CREDENTIALS }}
+          creds: ${{ secrets.AZURE_CREDENTIALS }}      # JSON met clientId, clientSecret, tenantId, subscriptionId
 
-      - name: Check subscription & RG
-        run: |
-          echo "=== Subscription ==="
-          az account show
-          echo "=== Resource Group ==="
-          az group show --name "$RESOURCE_GROUP"
+      - name: Zorg dat Resource Group bestaat
+        run: az group create --name "$RESOURCE_GROUP" --location "$LOCATION"
 
-      - name: Test Azure File Share connectivity
+      - name: Zorg dat Azure File Share bestaat
         run: |
-          az storage share exists \
+          az storage share create \
             --account-name "$STORAGE_ACCOUNT_NAME" \
-            --account-key  "$STORAGE_ACCOUNT_KEY" \
-            --name          "$SHARE_NAME"
+            --account-key  "${{ secrets.STORAGE_ACCOUNT_KEY }}" \
+            --name          "$SHARE_NAME" \
+          || echo "Share bestond al, ga door…"
 
-      # 1) ACI zonder volume mount, openbare test‑image
-      - name: Create ACI without volume
-        run: |
-          az container create \
-            --resource-group "$RESOURCE_GROUP" \
-            --name           "${CONTAINER_NAME}-no-vol" \
-            --image          mcr.microsoft.com/azuredocs/aci-helloworld:latest \
-            --dns-name-label "${CONTAINER_NAME}-no-vol" \
-            --ports          80 \
-            --cpu            0.2 \
-            --memory         0.3 \
-            --os-type        Linux \
-            --restart-policy Never \
-            --no-wait
+      - name: Login to ACR
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ env.REGISTRY_LOGIN_SERVER }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
 
-      - name: Wait & show status (no-vol)
-        run: |
-          sleep 15
-          az container show \
-            --resource-group "$RESOURCE_GROUP" \
-            --name           "${CONTAINER_NAME}-no-vol"
+      - name: Build & Push Docker image
+        uses: docker/build-push-action@v3
+        with:
+          context: .
+          push: true
+          tags: ${{ env.REGISTRY_LOGIN_SERVER }}/${{ env.REPOSITORY_NAME }}:${{ env.IMAGE_TAG }}
 
-      - name: Delete ACI (no-vol)
+      - name: Delete bestaande ACI (indien aanwezig)
         run: |
           az container delete \
             --resource-group "$RESOURCE_GROUP" \
-            --name           "${CONTAINER_NAME}-no-vol" \
-            --yes
+            --name           "$CONTAINER_NAME" \
+            --yes \
+          || echo "Geen oude container om te verwijderen."
 
-      # 2) ACI mét jouw volume én je eigen image
-      - name: Create ACI with volume + your image
+      - name: Deploy naar Azure Container Instance
         run: |
           az container create \
             --resource-group                 "$RESOURCE_GROUP" \
-            --name                           "${CONTAINER_NAME}-vol" \
-            --image                          "$REGISTRY_LOGIN_SERVER/$REPOSITORY_NAME:$IMAGE_TAG" \
+            --location                       "$LOCATION" \
+            --name                           "$CONTAINER_NAME" \
+            --image                          "${{ env.REGISTRY_LOGIN_SERVER }}/${{ env.REPOSITORY_NAME }}:${{ env.IMAGE_TAG }}" \
             --registry-login-server          "$REGISTRY_LOGIN_SERVER" \
-            --registry-username              "$REGISTRY_USERNAME" \
-            --registry-password              "$REGISTRY_PASSWORD" \
-            --dns-name-label                 "${CONTAINER_NAME}-vol" \
+            --registry-username              "${{ secrets.REGISTRY_USERNAME }}" \
+            --registry-password              "${{ secrets.REGISTRY_PASSWORD }}" \
+            --dns-name-label                 "$CONTAINER_NAME" \
             --ports                          3000 \
-            --cpu                            0.5 \
-            --memory                         1 \
+            --cpu                            1 \
+            --memory                         1.5 \
             --os-type                        Linux \
             --azure-file-volume-share-name   "$SHARE_NAME" \
             --azure-file-volume-account-name "$STORAGE_ACCOUNT_NAME" \
-            --azure-file-volume-account-key  "$STORAGE_ACCOUNT_KEY" \
+            --azure-file-volume-account-key  "${{ secrets.STORAGE_ACCOUNT_KEY }}" \
             --azure-file-volume-mount-path   /mnt/azfile \
-            --restart-policy                 Never \
-            --no-wait
-
-      - name: Wait & show status (vol)
-        run: |
-          sleep 20
-          az container show \
-            --resource-group "$RESOURCE_GROUP" \
-            --name           "${CONTAINER_NAME}-vol"
-
-      - name: Fetch container logs (vol)
-        run: |
-          az container logs \
-            --resource-group "$RESOURCE_GROUP" \
-            --name           "${CONTAINER_NAME}-vol"
-
-      - name: Cleanup ACI (vol)
-        run: |
-          az container delete \
-            --resource-group "$RESOURCE_GROUP" \
-            --name           "${CONTAINER_NAME}-vol" \
-            --yes
+            --restart-policy                 Always
