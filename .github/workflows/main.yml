@@ -1,3 +1,4 @@
+# .github/workflows/aci-deploy.yml
 name: Build & Deploy to Azure Container Instance
 
 on:
@@ -13,6 +14,9 @@ jobs:
       RESOURCE_GROUP:        ${{ secrets.RESOURCE_GROUP }}
       LOCATION:              ${{ secrets.LOCATION }}
       CONTAINER_NAME:        ${{ secrets.CONTAINER_NAME }}
+      SHARE_NAME:            ${{ secrets.SHARE_NAME }}
+      STORAGE_ACCOUNT_NAME:  ${{ secrets.STORAGE_ACCOUNT_NAME }}
+      STORAGE_ACCOUNT_KEY:   ${{ secrets.STORAGE_ACCOUNT_KEY }}
       REGISTRY_LOGIN_SERVER: ${{ secrets.REGISTRY_LOGIN_SERVER }}
       REGISTRY_USERNAME:     ${{ secrets.REGISTRY_USERNAME }}
       REGISTRY_PASSWORD:     ${{ secrets.REGISTRY_PASSWORD }}
@@ -23,10 +27,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Trim possible newlines uit secrets
+      - name: Trim alle mogelijke newlines uit secrets
         run: |
-          for v in RESOURCE_GROUP LOCATION CONTAINER_NAME; do
-            echo "$v=$(echo "${!v}" | tr -d '\r\n')" >> $GITHUB_ENV
+          for var in RESOURCE_GROUP LOCATION CONTAINER_NAME SHARE_NAME \
+                    STORAGE_ACCOUNT_NAME STORAGE_ACCOUNT_KEY \
+                    REGISTRY_LOGIN_SERVER REGISTRY_USERNAME REGISTRY_PASSWORD \
+                    REPOSITORY_NAME; do
+            echo "$var=$(echo "${!var}" | tr -d '\r\n')" >> $GITHUB_ENV
           done
 
       - name: Login to Azure
@@ -34,7 +41,7 @@ jobs:
         with:
           creds: ${{ env.AZURE_CREDENTIALS }}
 
-      - name: Create Resource Group (indien nodig)
+      - name: Ensure Resource Group bestaat
         run: |
           if ! az group show --name "$RESOURCE_GROUP" &> /dev/null; then
             az group create --name "$RESOURCE_GROUP" --location "$LOCATION"
@@ -60,18 +67,21 @@ jobs:
             --resource-group "$RESOURCE_GROUP" \
             --name           "$CONTAINER_NAME" \
             --yes \
-          || echo "Geen oude ACI om te verwijderen."
+          || echo "⏭️ Geen oude ACI om te verwijderen."
 
       - name: Deploy to Azure Container Instance
         run: |
           az container create \
-            --resource-group  "$RESOURCE_GROUP" \
-            --location        "$LOCATION" \
-            --name            "$CONTAINER_NAME" \
-            --image           "${REGISTRY_LOGIN_SERVER}/${REPOSITORY_NAME}:${IMAGE_TAG}" \
-            --dns-name-label  "$CONTAINER_NAME" \
-            --ports           3000 \
-            --cpu             1 \
-            --memory          1.5 \
-            --os-type         Linux \
-            --restart-policy  Always
+            --resource-group            "$RESOURCE_GROUP" \
+            --location                  "$LOCATION" \
+            --name                      "$CONTAINER_NAME" \
+            --image                     "${REGISTRY_LOGIN_SERVER}/${REPOSITORY_NAME}:${IMAGE_TAG}" \
+            --registry-login-server     "$REGISTRY_LOGIN_SERVER" \
+            --registry-username         "$REGISTRY_USERNAME" \
+            --registry-password         "$REGISTRY_PASSWORD" \
+            --dns-name-label            "$CONTAINER_NAME" \
+            --ports                     3000 \
+            --cpu                       1 \
+            --memory                    1.5 \
+            --os-type                   Linux \
+            --restart-policy            Always
