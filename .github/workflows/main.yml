@@ -1,94 +1,48 @@
-name: Debug Azure & Env
+name: ACR Credentials Debug
 
-on: [push]
+on:
+  push:
+    branches: [ main ]
 
 jobs:
-  debug:
+  debug-acr:
     runs-on: ubuntu-latest
 
     env:
-      # Secrets inlezen
-      AZURE_CREDENTIALS:     ${{ secrets.AZURE_CREDENTIALS }}
-      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      RESOURCE_GROUP:        ${{ secrets.RESOURCE_GROUP }}
-      LOCATION:              ${{ secrets.LOCATION }}
-      CONTAINER_NAME:        ${{ secrets.CONTAINER_NAME }}
       REGISTRY_LOGIN_SERVER: ${{ secrets.REGISTRY_LOGIN_SERVER }}
       REGISTRY_USERNAME:     ${{ secrets.REGISTRY_USERNAME }}
       REGISTRY_PASSWORD:     ${{ secrets.REGISTRY_PASSWORD }}
-      REPOSITORY_NAME:       ${{ secrets.REPOSITORY_NAME }}
-      IMAGE_TAG:             "debug"
-      SHARE_NAME:            ${{ secrets.SHARE_NAME }}
-      STORAGE_ACCOUNT_NAME:  ${{ secrets.STORAGE_ACCOUNT_NAME }}
-      STORAGE_ACCOUNT_KEY:   ${{ secrets.STORAGE_ACCOUNT_KEY }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Trim alle mogelijke newlines
-        run: |
-          for v in AZURE_SUBSCRIPTION_ID RESOURCE_GROUP LOCATION CONTAINER_NAME \
-                   SHARE_NAME STORAGE_ACCOUNT_NAME STORAGE_ACCOUNT_KEY \
-                   REGISTRY_LOGIN_SERVER REGISTRY_USERNAME REGISTRY_PASSWORD; do
-            echo "$v=$(echo "${!v}" | tr -d '\r\n')" >> $GITHUB_ENV
-          done
-
-      - name: Toon environment vars (geheimen worden automatisch gemaskeerd)
-        run: |
-          echo "=== ENVIRONMENT ==="
-          echo "AZURE_CREDENTIALS: $( [[ -n "$AZURE_CREDENTIALS" ]] && echo '[set]' || echo '[NIET SET]' )"
-          echo "AZURE_SUBSCRIPTION_ID: $AZURE_SUBSCRIPTION_ID"
-          echo "RESOURCE_GROUP:        $RESOURCE_GROUP"
-          echo "LOCATION:              $LOCATION"
-          echo "CONTAINER_NAME:        $CONTAINER_NAME"
-          echo "REGISTRY_LOGIN_SERVER: $REGISTRY_LOGIN_SERVER"
-          echo "REPOSITORY_NAME:       $REPOSITORY_NAME"
-          echo "SHARE_NAME:            $SHARE_NAME"
-          echo "STORAGE_ACCOUNT_NAME:  $STORAGE_ACCOUNT_NAME"
-          echo "=== END ENV ==="
-
-      - name: Valideer AZURE_CREDENTIALS JSON
-        run: |
-          echo "$AZURE_CREDENTIALS" | jq . \
-            && echo "✅ JSON valid" \
-            || ( echo "❌ JSON ongeldig" && exit 1 )
-
-      - name: Login naar Azure (debug)
-        uses: azure/login@v1
-        with:
-          creds: ${{ env.AZURE_CREDENTIALS }}
-
-      - name: Check actieve subscription
-        run: |
-          az account show
-
-      - name: Test Azure CLI-commando (resource groep existentie)
-        run: |
-          az group show --name "$RESOURCE_GROUP" \
-            && echo "✅ Resource group bestaat" \
-            || echo "❌ Resource group NIET gevonden"
-
-      # (Optioneel) test of file share bestaat
-      - name: Test Azure File Share
-        run: |
-          az storage share exists \
-            --account-name "$STORAGE_ACCOUNT_NAME" \
-            --account-key "$STORAGE_ACCOUNT_KEY" \
-            --name "$SHARE_NAME" \
-            | tee share.json
-          cat share.json
-
-      # En tenslotte: test ACR-login
-      - name: Docker login to ACR
+      - name: Login to ACR
         uses: docker/login-action@v2
         with:
           registry: ${{ env.REGISTRY_LOGIN_SERVER }}
           username: ${{ env.REGISTRY_USERNAME }}
           password: ${{ env.REGISTRY_PASSWORD }}
 
-      - name: Docker pull dummy image (test)
+      - name: Build tiny test image
         run: |
-          docker pull $REGISTRY_LOGIN_SERVER/hello-world:latest \
-            && echo "✅ Pull gelukt" \
-            || echo "❌ Pull faalt (misschien credentials?)"
+          cat << 'EOF' > Dockerfile.test
+          FROM busybox
+          CMD ["echo", "hello from ACR test"]
+          EOF
+          docker build \
+            -t $REGISTRY_LOGIN_SERVER/acr-test:latest \
+            -f Dockerfile.test \
+            .
+
+      - name: Push test image
+        run: |
+          docker push $REGISTRY_LOGIN_SERVER/acr-test:latest
+
+      - name: Pull test image
+        run: |
+          docker pull $REGISTRY_LOGIN_SERVER/acr-test:latest
+
+      - name: Run test image
+        run: |
+          docker run --rm $REGISTRY_LOGIN_SERVER/acr-test:latest
