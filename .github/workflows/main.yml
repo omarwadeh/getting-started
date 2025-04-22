@@ -1,87 +1,28 @@
-# .github/workflows/aci-deploy.yml
-name: Build & Deploy to Azure Container Instance
+# voeg dit toe in je job, in plaats van de bestaande "Deploy to Azure Container Instance"
+- name: Deploy to Azure Container Instance (debug)
+  run: |
+    # valideren dat je naam voldoet aan DNS-label regels
+    if [[ ! "$CONTAINER_NAME" =~ ^[a-z0-9-]+$ ]]; then
+      echo "❌ FOUT: CONTAINER_NAME bevat ongelijke tekens. Mag alleen a–z, 0–9 en '-' bevatten."
+      exit 1
+    fi
 
-on:
-  push:
-    branches: [ main ]
+    echo "ℹ️ Container name ok: $CONTAINER_NAME"
+    echo "ℹ️ Region: $LOCATION"
 
-jobs:
-  deploy-aci:
-    runs-on: ubuntu-latest
-
-    env:
-      AZURE_CREDENTIALS:     ${{ secrets.AZURE_CREDENTIALS }}
-      RESOURCE_GROUP:        ${{ secrets.RESOURCE_GROUP }}
-      LOCATION:              ${{ secrets.LOCATION }}
-      CONTAINER_NAME:        ${{ secrets.CONTAINER_NAME }}
-      SHARE_NAME:            ${{ secrets.SHARE_NAME }}
-      STORAGE_ACCOUNT_NAME:  ${{ secrets.STORAGE_ACCOUNT_NAME }}
-      STORAGE_ACCOUNT_KEY:   ${{ secrets.STORAGE_ACCOUNT_KEY }}
-      REGISTRY_LOGIN_SERVER: ${{ secrets.REGISTRY_LOGIN_SERVER }}
-      REGISTRY_USERNAME:     ${{ secrets.REGISTRY_USERNAME }}
-      REGISTRY_PASSWORD:     ${{ secrets.REGISTRY_PASSWORD }}
-      REPOSITORY_NAME:       ${{ secrets.REPOSITORY_NAME }}
-      IMAGE_TAG:             ${{ github.sha }}
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Trim alle mogelijke newlines uit secrets
-        run: |
-          for var in RESOURCE_GROUP LOCATION CONTAINER_NAME SHARE_NAME \
-                    STORAGE_ACCOUNT_NAME STORAGE_ACCOUNT_KEY \
-                    REGISTRY_LOGIN_SERVER REGISTRY_USERNAME REGISTRY_PASSWORD \
-                    REPOSITORY_NAME; do
-            echo "$var=$(echo "${!var}" | tr -d '\r\n')" >> $GITHUB_ENV
-          done
-
-      - name: Login to Azure
-        uses: azure/login@v1
-        with:
-          creds: ${{ env.AZURE_CREDENTIALS }}
-
-      - name: Ensure Resource Group bestaat
-        run: |
-          if ! az group show --name "$RESOURCE_GROUP" &> /dev/null; then
-            az group create --name "$RESOURCE_GROUP" --location "$LOCATION"
-          fi
-
-      - name: Login to ACR
-        uses: docker/login-action@v2
-        with:
-          registry: ${{ env.REGISTRY_LOGIN_SERVER }}
-          username: ${{ env.REGISTRY_USERNAME }}
-          password: ${{ env.REGISTRY_PASSWORD }}
-
-      - name: Build & Push Docker image
-        uses: docker/build-push-action@v3
-        with:
-          context: .
-          push: true
-          tags: ${{ env.REGISTRY_LOGIN_SERVER }}/${{ env.REPOSITORY_NAME }}:${{ env.IMAGE_TAG }}
-
-      - name: Remove existing ACI (if exists)
-        run: |
-          az container delete \
-            --resource-group "$RESOURCE_GROUP" \
-            --name           "$CONTAINER_NAME" \
-            --yes \
-          || echo "⏭️ Geen oude ACI om te verwijderen."
-
-      - name: Deploy to Azure Container Instance
-        run: |
-          az container create \
-            --resource-group            "$RESOURCE_GROUP" \
-            --location                  "$LOCATION" \
-            --name                      "$CONTAINER_NAME" \
-            --image                     "${REGISTRY_LOGIN_SERVER}/${REPOSITORY_NAME}:${IMAGE_TAG}" \
-            --registry-login-server     "$REGISTRY_LOGIN_SERVER" \
-            --registry-username         "$REGISTRY_USERNAME" \
-            --registry-password         "$REGISTRY_PASSWORD" \
-            --dns-name-label            "$CONTAINER_NAME" \
-            --ports                     3000 \
-            --cpu                       1 \
-            --memory                    1.5 \
-            --os-type                   Linux \
-            --restart-policy            Always
+    # echte deploy, mét --debug voor uitgebreide logs
+    az container create \
+      --resource-group         "$RESOURCE_GROUP" \
+      --location               "$LOCATION" \
+      --name                   "$CONTAINER_NAME" \
+      --image                  "${REGISTRY_LOGIN_SERVER}/${REPOSITORY_NAME}:${IMAGE_TAG}" \
+      --dns-name-label         "$CONTAINER_NAME" \
+      --ports                  3000 \
+      --cpu                    1 \
+      --memory                 1.5 \
+      --os-type                Linux \
+      --registry-login-server  "$REGISTRY_LOGIN_SERVER" \
+      --registry-username      "$REGISTRY_USERNAME" \
+      --registry-password      "$REGISTRY_PASSWORD" \
+      --restart-policy         Always \
+      --debug
