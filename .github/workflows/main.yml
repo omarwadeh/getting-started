@@ -1,28 +1,42 @@
-# voeg dit toe in je job, in plaats van de bestaande "Deploy to Azure Container Instance"
-- name: Deploy to Azure Container Instance (debug)
-  run: |
-    # valideren dat je naam voldoet aan DNS-label regels
-    if [[ ! "$CONTAINER_NAME" =~ ^[a-z0-9-]+$ ]]; then
-      echo "❌ FOUT: CONTAINER_NAME bevat ongelijke tekens. Mag alleen a–z, 0–9 en '-' bevatten."
-      exit 1
-    fi
+name: Debug ACI Deploy
 
-    echo "ℹ️ Container name ok: $CONTAINER_NAME"
-    echo "ℹ️ Region: $LOCATION"
+on:
+  push:
+    branches: [ main ]
 
-    # echte deploy, mét --debug voor uitgebreide logs
-    az container create \
-      --resource-group         "$RESOURCE_GROUP" \
-      --location               "$LOCATION" \
-      --name                   "$CONTAINER_NAME" \
-      --image                  "${REGISTRY_LOGIN_SERVER}/${REPOSITORY_NAME}:${IMAGE_TAG}" \
-      --dns-name-label         "$CONTAINER_NAME" \
-      --ports                  3000 \
-      --cpu                    1 \
-      --memory                 1.5 \
-      --os-type                Linux \
-      --registry-login-server  "$REGISTRY_LOGIN_SERVER" \
-      --registry-username      "$REGISTRY_USERNAME" \
-      --registry-password      "$REGISTRY_PASSWORD" \
-      --restart-policy         Always \
-      --debug
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Deploy to Azure Container Instance (debug)
+        shell: bash
+        run: |
+          # 1) valideer DNS‑label regel
+          if [[ ! "$CONTAINER_NAME" =~ ^[a-z0-9-]+$ ]]; then
+            echo "❌ FOUT: CONTAINER_NAME bevat ongeldige tekens. Mag alleen a–z, 0–9 en '-' bevatten."
+            exit 1
+          fi
+
+          echo "ℹ️ Container name ok: $CONTAINER_NAME"
+          echo "ℹ️ Region: $LOCATION"
+
+          # 2) deploy met debug‑logging
+          az container create \
+            --resource-group         "$RESOURCE_GROUP" \
+            --location               "$LOCATION" \
+            --name                   "$CONTAINER_NAME" \
+            --image                  "${REGISTRY_LOGIN_SERVER}/${REPOSITORY_NAME}:${IMAGE_TAG}" \
+            --dns-name-label         "$CONTAINER_NAME" \
+            --ports                  3000 \
+            --cpu                    1 \
+            --memory                 1.5 \
+            --os-type                Linux \
+            --registry-login-server  "$REGISTRY_LOGIN_SERVER" \
+            --registry-username      "$REGISTRY_USERNAME" \
+            --registry-password      "$REGISTRY_PASSWORD" \
+            --restart-policy         Always \
+            --debug
