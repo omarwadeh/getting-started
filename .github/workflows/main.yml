@@ -1,30 +1,33 @@
+# .github/workflows/aci-deploy.yml
 name: Build & Deploy to Azure Container Instance
 
 on:
   push:
-    branches:
-      - main
-
-env:
-  # Gebruik hier alleen secrets, geen regels of lege regels
-  RESOURCE_GROUP:        ${{ secrets.RESOURCE_GROUP }}
-  LOCATION:              ${{ secrets.LOCATION }}
-  CONTAINER_NAME:        ${{ secrets.CONTAINER_NAME }}
-  SHARE_NAME:            ${{ secrets.SHARE_NAME }}
-  STORAGE_ACCOUNT_NAME:  ${{ secrets.STORAGE_ACCOUNT_NAME }}
-  REGISTRY_LOGIN_SERVER: ${{ secrets.REGISTRY_LOGIN_SERVER }}
-  REPOSITORY_NAME:       ${{ secrets.REPOSITORY_NAME }}
-  IMAGE_TAG:             ${{ github.sha }}
+    branches: [ main ]
 
 jobs:
-  build-and-deploy:
+  deploy:
     runs-on: ubuntu-latest
+
+    env:
+      AZURE_CREDENTIALS:     ${{ secrets.AZURE_CREDENTIALS }}
+      RESOURCE_GROUP:        ${{ secrets.RESOURCE_GROUP }}
+      LOCATION:              ${{ secrets.LOCATION }}
+      CONTAINER_NAME:        ${{ secrets.CONTAINER_NAME }}
+      SHARE_NAME:            ${{ secrets.SHARE_NAME }}
+      STORAGE_ACCOUNT_NAME:  ${{ secrets.STORAGE_ACCOUNT_NAME }}
+      STORAGE_ACCOUNT_KEY:   ${{ secrets.STORAGE_ACCOUNT_KEY }}
+      REGISTRY_LOGIN_SERVER: ${{ secrets.REGISTRY_LOGIN_SERVER }}
+      REGISTRY_USERNAME:     ${{ secrets.REGISTRY_USERNAME }}
+      REGISTRY_PASSWORD:     ${{ secrets.REGISTRY_PASSWORD }}
+      REPOSITORY_NAME:       ${{ secrets.REPOSITORY_NAME }}
+      IMAGE_TAG:             ${{ github.sha }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Trim newlines uit secrets
+      - name: Trim possible newlines uit secrets
         run: |
           for var in RESOURCE_GROUP LOCATION CONTAINER_NAME SHARE_NAME STORAGE_ACCOUNT_NAME; do
             echo "$var=$(echo "${!var}" | tr -d '\r\n')" >> $GITHUB_ENV
@@ -33,25 +36,30 @@ jobs:
       - name: Login to Azure
         uses: azure/login@v1
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}      # JSON met clientId, clientSecret, tenantId, subscriptionId
+          creds: ${{ env.AZURE_CREDENTIALS }}
 
-      - name: Zorg dat Resource Group bestaat
-        run: az group create --name "$RESOURCE_GROUP" --location "$LOCATION"
+      - name: Ensure Resource Group bestaat
+        run: |
+          if az group show --name "$RESOURCE_GROUP" &> /dev/null; then
+            echo "⏭️ Resource Group $RESOURCE_GROUP bestaat al in $(az group show -g $RESOURCE_GROUP --query location -o tsv)"
+          else
+            az group create --name "$RESOURCE_GROUP" --location "$LOCATION"
+          fi
 
-      - name: Zorg dat Azure File Share bestaat
+      - name: Ensure Azure File Share bestaat
         run: |
           az storage share create \
             --account-name "$STORAGE_ACCOUNT_NAME" \
-            --account-key  "${{ secrets.STORAGE_ACCOUNT_KEY }}" \
+            --account-key  "$STORAGE_ACCOUNT_KEY" \
             --name          "$SHARE_NAME" \
-          || echo "Share bestond al, ga door…"
+          || echo "⏭️ File Share $SHARE_NAME bestaat al"
 
       - name: Login to ACR
         uses: docker/login-action@v2
         with:
           registry: ${{ env.REGISTRY_LOGIN_SERVER }}
-          username: ${{ secrets.REGISTRY_USERNAME }}
-          password: ${{ secrets.REGISTRY_PASSWORD }}
+          username: ${{ env.REGISTRY_USERNAME }}
+          password: ${{ env.REGISTRY_PASSWORD }}
 
       - name: Build & Push Docker image
         uses: docker/build-push-action@v3
@@ -66,7 +74,7 @@ jobs:
             --resource-group "$RESOURCE_GROUP" \
             --name           "$CONTAINER_NAME" \
             --yes \
-          || echo "Geen oude container om te verwijderen."
+          || echo "⏭️ Geen oude ACI om te verwijderen"
 
       - name: Deploy naar Azure Container Instance
         run: |
@@ -74,10 +82,10 @@ jobs:
             --resource-group                 "$RESOURCE_GROUP" \
             --location                       "$LOCATION" \
             --name                           "$CONTAINER_NAME" \
-            --image                          "${{ env.REGISTRY_LOGIN_SERVER }}/${{ env.REPOSITORY_NAME }}:${{ env.IMAGE_TAG }}" \
+            --image                          "${REGISTRY_LOGIN_SERVER}/${REPOSITORY_NAME}:${IMAGE_TAG}" \
             --registry-login-server          "$REGISTRY_LOGIN_SERVER" \
-            --registry-username              "${{ secrets.REGISTRY_USERNAME }}" \
-            --registry-password              "${{ secrets.REGISTRY_PASSWORD }}" \
+            --registry-username              "$REGISTRY_USERNAME" \
+            --registry-password              "$REGISTRY_PASSWORD" \
             --dns-name-label                 "$CONTAINER_NAME" \
             --ports                          3000 \
             --cpu                            1 \
@@ -85,6 +93,6 @@ jobs:
             --os-type                        Linux \
             --azure-file-volume-share-name   "$SHARE_NAME" \
             --azure-file-volume-account-name "$STORAGE_ACCOUNT_NAME" \
-            --azure-file-volume-account-key  "${{ secrets.STORAGE_ACCOUNT_KEY }}" \
+            --azure-file-volume-account-key  "$STORAGE_ACCOUNT_KEY" \
             --azure-file-volume-mount-path   /mnt/azfile \
             --restart-policy                 Always
