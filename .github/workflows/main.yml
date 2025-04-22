@@ -1,83 +1,94 @@
-name: Build & Deploy to ACI
-on:
-  push:
-    branches: [ main ]
+name: Debug Azure & Env
+
+on: [push]
 
 jobs:
-  build-and-deploy:
+  debug:
     runs-on: ubuntu-latest
+
     env:
-      AZURE_CREDENTIALS:       ${{ secrets.AZURE_CREDENTIALS }}
-      AZURE_SUBSCRIPTION_ID:   ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      RESOURCE_GROUP:          ${{ secrets.RESOURCE_GROUP }}
-      LOCATION:                ${{ secrets.LOCATION }}
-      CONTAINER_NAME:          ${{ secrets.CONTAINER_NAME }}
-      REGISTRY_LOGIN_SERVER:   ${{ secrets.REGISTRY_LOGIN_SERVER }}
-      REGISTRY_USERNAME:       ${{ secrets.REGISTRY_USERNAME }}
-      REGISTRY_PASSWORD:       ${{ secrets.REGISTRY_PASSWORD }}
-      REPOSITORY_NAME:         ${{ secrets.REPOSITORY_NAME }}
-      IMAGE_TAG:               "23"
-      SHARE_NAME:              ${{ secrets.SHARE_NAME }}
-      STORAGE_ACCOUNT_NAME:    ${{ secrets.STORAGE_ACCOUNT_NAME }}
-      STORAGE_ACCOUNT_KEY:     ${{ secrets.STORAGE_ACCOUNT_KEY }}
+      # Secrets inlezen
+      AZURE_CREDENTIALS:     ${{ secrets.AZURE_CREDENTIALS }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      RESOURCE_GROUP:        ${{ secrets.RESOURCE_GROUP }}
+      LOCATION:              ${{ secrets.LOCATION }}
+      CONTAINER_NAME:        ${{ secrets.CONTAINER_NAME }}
+      REGISTRY_LOGIN_SERVER: ${{ secrets.REGISTRY_LOGIN_SERVER }}
+      REGISTRY_USERNAME:     ${{ secrets.REGISTRY_USERNAME }}
+      REGISTRY_PASSWORD:     ${{ secrets.REGISTRY_PASSWORD }}
+      REPOSITORY_NAME:       ${{ secrets.REPOSITORY_NAME }}
+      IMAGE_TAG:             "debug"
+      SHARE_NAME:            ${{ secrets.SHARE_NAME }}
+      STORAGE_ACCOUNT_NAME:  ${{ secrets.STORAGE_ACCOUNT_NAME }}
+      STORAGE_ACCOUNT_KEY:   ${{ secrets.STORAGE_ACCOUNT_KEY }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Login to Azure & set subscription
+      - name: Trim alle mogelijke newlines
+        run: |
+          for v in AZURE_SUBSCRIPTION_ID RESOURCE_GROUP LOCATION CONTAINER_NAME \
+                   SHARE_NAME STORAGE_ACCOUNT_NAME STORAGE_ACCOUNT_KEY \
+                   REGISTRY_LOGIN_SERVER REGISTRY_USERNAME REGISTRY_PASSWORD; do
+            echo "$v=$(echo "${!v}" | tr -d '\r\n')" >> $GITHUB_ENV
+          done
+
+      - name: Toon environment vars (geheimen worden automatisch gemaskeerd)
+        run: |
+          echo "=== ENVIRONMENT ==="
+          echo "AZURE_CREDENTIALS: $( [[ -n "$AZURE_CREDENTIALS" ]] && echo '[set]' || echo '[NIET SET]' )"
+          echo "AZURE_SUBSCRIPTION_ID: $AZURE_SUBSCRIPTION_ID"
+          echo "RESOURCE_GROUP:        $RESOURCE_GROUP"
+          echo "LOCATION:              $LOCATION"
+          echo "CONTAINER_NAME:        $CONTAINER_NAME"
+          echo "REGISTRY_LOGIN_SERVER: $REGISTRY_LOGIN_SERVER"
+          echo "REPOSITORY_NAME:       $REPOSITORY_NAME"
+          echo "SHARE_NAME:            $SHARE_NAME"
+          echo "STORAGE_ACCOUNT_NAME:  $STORAGE_ACCOUNT_NAME"
+          echo "=== END ENV ==="
+
+      - name: Valideer AZURE_CREDENTIALS JSON
+        run: |
+          echo "$AZURE_CREDENTIALS" | jq . \
+            && echo "✅ JSON valid" \
+            || ( echo "❌ JSON ongeldig" && exit 1 )
+
+      - name: Login naar Azure (debug)
         uses: azure/login@v1
         with:
-          creds:          ${{ env.AZURE_CREDENTIALS }}
-          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+          creds: ${{ env.AZURE_CREDENTIALS }}
 
-      - name: 🧹 Trim newline/carriage-returns from secrets
+      - name: Check actieve subscription
         run: |
-          echo "RESOURCE_GROUP=$(echo \"$RESOURCE_GROUP\" | tr -d '\r\n')" >> $GITHUB_ENV
-          echo "LOCATION=$(echo \"$LOCATION\"       | tr -d '\r\n')" >> $GITHUB_ENV
-          echo "CONTAINER_NAME=$(echo \"$CONTAINER_NAME\" | tr -d '\r\n')" >> $GITHUB_ENV
-          echo "SHARE_NAME=$(echo \"$SHARE_NAME\"     | tr -d '\r\n')" >> $GITHUB_ENV
+          az account show
 
-      - name: Delete existing container (if exists)
+      - name: Test Azure CLI-commando (resource groep existentie)
         run: |
-          az container delete \
-            --resource-group "$RESOURCE_GROUP" \
-            --name           "$CONTAINER_NAME" \
-            --yes \
-          || echo "Geen oude container om te verwijderen, ga door…"
+          az group show --name "$RESOURCE_GROUP" \
+            && echo "✅ Resource group bestaat" \
+            || echo "❌ Resource group NIET gevonden"
 
-      - name: Login to ACR
+      # (Optioneel) test of file share bestaat
+      - name: Test Azure File Share
+        run: |
+          az storage share exists \
+            --account-name "$STORAGE_ACCOUNT_NAME" \
+            --account-key "$STORAGE_ACCOUNT_KEY" \
+            --name "$SHARE_NAME" \
+            | tee share.json
+          cat share.json
+
+      # En tenslotte: test ACR-login
+      - name: Docker login to ACR
         uses: docker/login-action@v2
         with:
           registry: ${{ env.REGISTRY_LOGIN_SERVER }}
           username: ${{ env.REGISTRY_USERNAME }}
           password: ${{ env.REGISTRY_PASSWORD }}
 
-      - name: Build & Push Docker image
-        uses: docker/build-push-action@v3
-        with:
-          context: .
-          push: true
-          tags: ${{ env.REGISTRY_LOGIN_SERVER }}/${{ env.REPOSITORY_NAME }}:${{ env.IMAGE_TAG }}
-
-      - name: Deploy to Azure Container Instance
+      - name: Docker pull dummy image (test)
         run: |
-          az container create \
-            --resource-group                 "$RESOURCE_GROUP" \
-            --location                       "$LOCATION" \
-            --name                           "$CONTAINER_NAME" \
-            --image                          "$REGISTRY_LOGIN_SERVER/$REPOSITORY_NAME:$IMAGE_TAG" \
-            --registry-login-server          "$REGISTRY_LOGIN_SERVER" \
-            --registry-username              "$REGISTRY_USERNAME" \
-            --registry-password              "$REGISTRY_PASSWORD" \
-            --dns-name-label                 "$CONTAINER_NAME" \
-            --os-type                        Linux \
-            --ports                          3000 \
-            --cpu                            1 \
-            --memory                         1.5 \
-            --azure-file-volume-share-name   "$SHARE_NAME" \
-            --azure-file-volume-account-name "$STORAGE_ACCOUNT_NAME" \
-            --azure-file-volume-account-key  "$STORAGE_ACCOUNT_KEY" \
-            --azure-file-volume-mount-path   /mnt/azfile \
-            --protocol                       TCP \
-            --restart-policy                 Always
+          docker pull $REGISTRY_LOGIN_SERVER/hello-world:latest \
+            && echo "✅ Pull gelukt" \
+            || echo "❌ Pull faalt (misschien credentials?)"
